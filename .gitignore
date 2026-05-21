@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Scraper outputs (may contain sensitive data)
+session_cookies.json
+plants.csv
+
+# macOS
+.DS_Store
