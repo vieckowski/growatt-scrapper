@@ -249,16 +249,50 @@ def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
         # --- Pagination ---
         try:
             next_btn = driver.find_element(By.CSS_SELECTOR, NEXT_PAGE_SELECTOR)
-            classes = next_btn.get_attribute("class") or ""
-            if "layui-disabled" in classes or not next_btn.is_displayed():
-                print("\n[pagination] Last page reached.")
-                break
-            next_btn.click()
-            page_num += 1
-            time.sleep(1.5)
         except Exception:
             print("\n[pagination] No next-page button — done.")
             break
+
+        # Check every known disabled signal before clicking
+        classes  = next_btn.get_attribute("class") or ""
+        href     = next_btn.get_attribute("href") or ""
+        disabled = next_btn.get_attribute("disabled")
+        if (
+            "layui-disabled" in classes
+            or "disabled" in classes
+            or disabled is not None
+            or href in ("javascript:;", "javascript:void(0)", "#", "")
+            or not next_btn.is_displayed()
+        ):
+            print("\n[pagination] Last page reached (button disabled).")
+            break
+
+        # Capture first-row fingerprint before clicking so we can detect
+        # a no-op click (site stays on the same page silently)
+        try:
+            first_row_text = driver.find_elements(
+                By.CSS_SELECTOR, TABLE_ROW_SELECTOR
+            )[0].text
+        except Exception:
+            first_row_text = ""
+
+        next_btn.click()
+        time.sleep(2)
+
+        # Confirm the page actually changed
+        try:
+            _wait_for_table(driver, timeout=8)
+            new_first_row_text = driver.find_elements(
+                By.CSS_SELECTOR, TABLE_ROW_SELECTOR
+            )[0].text
+        except Exception:
+            new_first_row_text = first_row_text  # treat as unchanged on error
+
+        if new_first_row_text == first_row_text:
+            print("\n[pagination] Page content unchanged after Next click — last page.")
+            break
+
+        page_num += 1
 
     return all_records
 
