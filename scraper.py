@@ -39,7 +39,7 @@ TABLE_URL = f"{BASE_URL}/index"
 COOKIES_FILE  = "session_cookies.json"
 OUTPUT_FILE   = "end_users.csv"
 
-TABLE_ROW_SELECTOR = "tbody#tbl_data_plant tr"
+TABLE_ROW_SELECTOR = "tbody#tbl_data_user tr"
 NEXT_PAGE_SELECTOR = "a.layui-laypage-next"
 END_USERS_MENU_SELECTOR = "#ul_menu_left_main li[data-url='deviceManage/userManage']"
 
