@@ -1,13 +1,17 @@
 """
-Growatt OSS plant table scraper.
+Growatt OSS end-user table scraper.
+
+After login the script clicks "End Users" in the left navigation menu,
+then iterates every row across all pages.
 
 First run  : opens a visible Chrome window, pauses for manual login,
              saves cookies, then scrapes all pages.
 Later runs : loads saved cookies and runs headless automatically.
 
 Usage:
-    python scraper.py                  # auto-detects mode
-    python scraper.py --reset-session  # force a fresh login
+    python scraper.py                  # scrape everything
+    python scraper.py --test           # scrape only 1 row (first page only)
+    python scraper.py --reset-session  # delete saved cookies and log in fresh
 """
 
 import argparse
@@ -32,11 +36,12 @@ BASE_URL = "https://oss.growatt.com"
 LOGIN_URL = f"{BASE_URL}/login"
 TABLE_URL = f"{BASE_URL}/index"
 
-COOKIES_FILE = "session_cookies.json"
-OUTPUT_FILE = "plants.csv"
+COOKIES_FILE  = "session_cookies.json"
+OUTPUT_FILE   = "end_users.csv"
 
 TABLE_ROW_SELECTOR = "tbody#tbl_data_plant tr"
 NEXT_PAGE_SELECTOR = "a.layui-laypage-next"
+END_USERS_MENU_SELECTOR = "#ul_menu_left_main li[data-url='deviceManage/userManage']"
 
 # ---------------------------------------------------------------------------
 # Driver helpers
@@ -62,6 +67,20 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
 
 
 # ---------------------------------------------------------------------------
+# Navigation
+# ---------------------------------------------------------------------------
+
+def navigate_to_end_users(driver: webdriver.Chrome) -> None:
+    """Click the End Users item in the left menu and wait for the table."""
+    menu_item = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, END_USERS_MENU_SELECTOR))
+    )
+    menu_item.click()
+    _wait_for_table(driver)
+    print("[nav] End Users section loaded.")
+
+
+# ---------------------------------------------------------------------------
 # Cookie / session management
 # ---------------------------------------------------------------------------
 
@@ -80,19 +99,9 @@ def load_cookies(driver: webdriver.Chrome) -> None:
                 pass
 
 
-def _table_is_visible(driver: webdriver.Chrome) -> bool:
-    try:
-        WebDriverWait(driver, 8).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, TABLE_ROW_SELECTOR))
-        )
-        return True
-    except Exception:
-        return False
-
-
 def setup_session(reset: bool = False) -> webdriver.Chrome:
     """
-    Returns a ready driver positioned on the table page.
+    Returns a ready driver positioned on the End Users table.
     Handles first-run (headed + manual login) and subsequent runs (headless).
     """
     if reset and os.path.exists(COOKIES_FILE):
@@ -103,15 +112,17 @@ def setup_session(reset: bool = False) -> webdriver.Chrome:
     if os.path.exists(COOKIES_FILE):
         print("[session] Found saved cookies — trying headless mode...")
         driver = create_driver(headless=True)
-        driver.get(BASE_URL)          # must be on domain before adding cookies
+        driver.get(BASE_URL)
         load_cookies(driver)
         driver.get(TABLE_URL)
-        if _table_is_visible(driver):
+        try:
+            navigate_to_end_users(driver)
             print("[session] Session restored — running headless.")
             return driver
-        print("[session] Cookies expired. Falling back to manual login.")
-        driver.quit()
-        os.remove(COOKIES_FILE)
+        except Exception:
+            print("[session] Cookies expired. Falling back to manual login.")
+            driver.quit()
+            os.remove(COOKIES_FILE)
 
     # --- Manual login (headed) ---
     print("[session] Opening browser for manual login...")
@@ -120,20 +131,17 @@ def setup_session(reset: bool = False) -> webdriver.Chrome:
 
     print("\n" + "=" * 55)
     print("  Log in manually in the browser window that opened.")
-    print("  Once you can see the plant table, come back here")
+    print("  Once you can see the main page, come back here")
     print("  and press ENTER to continue.")
     print("=" * 55 + "\n")
     input("  Press ENTER when ready > ")
 
     save_cookies(driver)
 
-    # Navigate to the table if not already there
     if TABLE_URL not in driver.current_url:
         driver.get(TABLE_URL)
 
-    if not _table_is_visible(driver):
-        raise RuntimeError("Could not find the plant table after login. Check TABLE_URL.")
-
+    navigate_to_end_users(driver)
     return driver
 
 
@@ -155,11 +163,6 @@ def scrape_detail_page(driver: webdriver.Chrome) -> dict:
     # --- PLACEHOLDER — replace with real selectors ---
     data["detail_page_title"] = driver.title
     data["detail_url"]        = driver.current_url
-    # Example (uncomment and adapt):
-    # data["plant_name"]   = driver.find_element(By.CSS_SELECTOR, ".plant-name").text.strip()
-    # data["capacity_kw"]  = driver.find_element(By.CSS_SELECTOR, ".capacity").text.strip()
-    # data["total_energy"] = driver.find_element(By.CSS_SELECTOR, ".total-energy").text.strip()
-    # data["status"]       = driver.find_element(By.CSS_SELECTOR, ".plant-status").text.strip()
     # --- END PLACEHOLDER ---
 
     return data
@@ -173,29 +176,22 @@ def _wait_for_table(driver: webdriver.Chrome, timeout: int = 15) -> None:
     WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, TABLE_ROW_SELECTOR))
     )
-    time.sleep(0.8)   # let JS finish rendering the rows
+    time.sleep(0.8)
 
 
 def process_row(driver: webdriver.Chrome, row_index: int) -> dict | None:
-    """
-    Double-clicks the row at position row_index (0-based), scrapes the detail
-    tab, closes it, and returns the data dict.  Returns None on failure.
-    """
     main_handle = driver.current_window_handle
 
-    # Re-fetch row by index every time to avoid stale-element errors
     rows = driver.find_elements(By.CSS_SELECTOR, TABLE_ROW_SELECTOR)
     if row_index >= len(rows):
         return None
 
     row = rows[row_index]
 
-    # Scroll into view then double-click
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", row)
     time.sleep(0.3)
     ActionChains(driver).double_click(row).perform()
 
-    # Wait for a new tab to appear (up to 8 s)
     try:
         WebDriverWait(driver, 8).until(lambda d: len(d.window_handles) > 1)
     except Exception:
@@ -209,7 +205,7 @@ def process_row(driver: webdriver.Chrome, row_index: int) -> dict | None:
         WebDriverWait(driver, 12).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
-        time.sleep(1.5)   # let the detail page render
+        time.sleep(1.5)
         data = scrape_detail_page(driver)
     except Exception as exc:
         print(f"    WARNING: Row {row_index + 1} — error scraping detail: {exc}")
@@ -226,7 +222,7 @@ def process_row(driver: webdriver.Chrome, row_index: int) -> dict | None:
 # Page-by-page loop
 # ---------------------------------------------------------------------------
 
-def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
+def scrape_all_pages(driver: webdriver.Chrome, test: bool = False) -> list[dict]:
     all_records: list[dict] = []
     page_num = 1
 
@@ -237,14 +233,19 @@ def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
         row_count = len(driver.find_elements(By.CSS_SELECTOR, TABLE_ROW_SELECTOR))
         print(f"[page {page_num}] {row_count} rows found.")
 
-        for idx in range(row_count):
-            print(f"  Row {idx + 1}/{row_count}...", end=" ", flush=True)
+        rows_to_process = 1 if test else row_count
+        for idx in range(rows_to_process):
+            print(f"  Row {idx + 1}/{rows_to_process}...", end=" ", flush=True)
             record = process_row(driver, idx)
             if record:
                 all_records.append(record)
                 print("OK")
             else:
                 print("SKIPPED")
+
+        if test:
+            print("\n[test] Test mode — stopping after 1 row.")
+            break
 
         # --- Pagination ---
         try:
@@ -253,7 +254,6 @@ def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
             print("\n[pagination] No next-page button — done.")
             break
 
-        # Check every known disabled signal before clicking
         classes  = next_btn.get_attribute("class") or ""
         href     = next_btn.get_attribute("href") or ""
         disabled = next_btn.get_attribute("disabled")
@@ -267,8 +267,6 @@ def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
             print("\n[pagination] Last page reached (button disabled).")
             break
 
-        # Capture first-row fingerprint before clicking so we can detect
-        # a no-op click (site stays on the same page silently)
         try:
             first_row_text = driver.find_elements(
                 By.CSS_SELECTOR, TABLE_ROW_SELECTOR
@@ -279,14 +277,13 @@ def scrape_all_pages(driver: webdriver.Chrome) -> list[dict]:
         next_btn.click()
         time.sleep(2)
 
-        # Confirm the page actually changed
         try:
             _wait_for_table(driver, timeout=8)
             new_first_row_text = driver.find_elements(
                 By.CSS_SELECTOR, TABLE_ROW_SELECTOR
             )[0].text
         except Exception:
-            new_first_row_text = first_row_text  # treat as unchanged on error
+            new_first_row_text = first_row_text
 
         if new_first_row_text == first_row_text:
             print("\n[pagination] Page content unchanged after Next click — last page.")
@@ -317,7 +314,12 @@ def save_csv(records: list[dict], path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Growatt plant table scraper")
+    parser = argparse.ArgumentParser(description="Growatt end-user table scraper")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Scrape only the first row on the first page (for testing)",
+    )
     parser.add_argument(
         "--reset-session",
         action="store_true",
@@ -325,9 +327,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.test:
+        print("[test] Test mode enabled — will scrape 1 row only.")
+
     driver = setup_session(reset=args.reset_session)
     try:
-        records = scrape_all_pages(driver)
+        records = scrape_all_pages(driver, test=args.test)
         save_csv(records, OUTPUT_FILE)
     finally:
         driver.quit()
