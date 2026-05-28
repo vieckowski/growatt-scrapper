@@ -76,6 +76,7 @@ def navigate_to_end_users(driver: webdriver.Chrome) -> None:
         EC.element_to_be_clickable((By.CSS_SELECTOR, END_USERS_MENU_SELECTOR))
     )
     menu_item.click()
+    time.sleep(2)   # wait for AJAX to replace the table content
     _wait_for_table(driver)
     print("[nav] End Users section loaded.")
 
@@ -172,10 +173,24 @@ def scrape_detail_page(driver: webdriver.Chrome) -> dict:
 # Row-by-row processing
 # ---------------------------------------------------------------------------
 
+def _debug_table_ids(driver: webdriver.Chrome) -> None:
+    tbodies = driver.find_elements(By.TAG_NAME, "tbody")
+    if tbodies:
+        ids = [f"#{el.get_attribute('id') or '(no id)'}" for el in tbodies]
+        print(f"  [debug] tbody elements found on page: {', '.join(ids)}")
+    else:
+        print("  [debug] No tbody elements found on page at all.")
+
+
 def _wait_for_table(driver: webdriver.Chrome, timeout: int = 15) -> None:
-    WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, TABLE_ROW_SELECTOR))
-    )
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, TABLE_ROW_SELECTOR))
+        )
+    except Exception:
+        print(f"\n[error] Timed out waiting for selector: {TABLE_ROW_SELECTOR!r}")
+        _debug_table_ids(driver)
+        raise
     time.sleep(0.8)
 
 
